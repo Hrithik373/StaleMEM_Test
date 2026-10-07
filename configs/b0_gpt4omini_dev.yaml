@@ -1,0 +1,23 @@
+# E1 / B0 development run: plain long-context GPT-4o-mini on a 50-instance subset.
+# Paper reference (Table 2, full 400): T1 30.0/0.0/11.0, T2 9.5/0.0/1.5, Overall 8.7
+name: b0_gpt4omini_dev
+data: data/stale/T1_T2_400_FULL.json
+subset: {n_per_type: 25, seed: 0}
+session_mode: full
+workers: 8
+
+system:
+  kind: full_context
+  llm:
+    model: gpt-4o-mini-2024-07-18   # pinned snapshot; the "gpt-4o-mini" alias resolves to it (checked 2026-10-03)
+    api_key_env: OPENAI_API_KEY
+    tpm: 190000                # account limit is 200K TPM for gpt-4o-mini (tier 1); keep headroom
+    params: {temperature: 0}   # paper does not state target temperature; official code uses API default
+  args:
+    context_limit: 128000      # official TOKEN_LIMIT; triggers evidence-preserving truncation
+
+judge:
+  llm:
+    model: gemini-3.1-flash-lite
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key_env: GEMINI_API_KEY
