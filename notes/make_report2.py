@@ -168,6 +168,149 @@ callout("<b>Key practical finding.</b> At the current account tier the rate limi
         "- full 400-instance B0: about 20 hours.<br/>"
         "The Batch API or a higher usage tier would remove this bottleneck (Section 3.3). CUPMem runs are less affected "
         "because they make many small calls rather than a few huge ones.")
+P("Readers new to the project should start with the Background part that follows. It explains the paper, the "
+  "benchmark, the proposed method and what this project tests, so that the results in Part II can be read in context.")
+
+# ======================================================================= BACKGROUND
+part("Background: the paper and this project")
+P("This part summarises the paper being reproduced and explains how this project relates to it. Record #1 "
+  "(Part I) has more dataset examples and the full CUPMem state schema.")
+
+H("B1. The paper in one paragraph")
+P("<b>STALE: Can LLM Agents Know When Their Memories Are No Longer Valid?</b> (Chao, Bai, Sheng, Li and Sun; Wuhan "
+  "University, CUHK and HKUST; arXiv:2605.06527, May 2026). LLM assistants are increasingly expected to remember "
+  "users across many sessions. Existing memory benchmarks mostly test whether a stored fact can be <i>retrieved</i>. "
+  "They do not test whether the assistant notices that a stored fact has become <i>wrong</i>. The paper names this "
+  "failure mode the <b>implicit conflict</b>. It contributes three things:")
+bullets(["<b>STALE</b>, a benchmark of 400 expert-validated implicit-conflict scenarios (1,200 queries) covering more "
+         "than 100 everyday topics, with histories of up to about 150K tokens;",
+         "an <b>evaluation of 15 systems</b> (frontier LLMs, open models and memory frameworks), which all perform poorly. "
+         "The best system reaches only 55.2% overall accuracy;",
+         "<b>CUPMem</b>, a prototype memory system that judges at write time whether old memories are still valid. "
+         "With the same GPT-4o-mini backbone it raises overall accuracy from 8.7% to 68.0%."])
+
+H("B2. The problem: implicit conflicts")
+P("People rarely announce that an old fact has stopped being true. A user who once said \"I ride my bike to work "
+  "every day\" will later mention a broken leg, not \"please forget that I cycle\". The new observation "
+  "<i>invalidates</i> the old memory without ever <i>negating</i> it. Detecting this requires commonsense inference "
+  "rather than string matching. The paper formalises the idea with two axioms:")
+bullets(["<b>Belief incompatibility:</b> the old observation supports a belief that cannot hold together with what "
+         "the new observation implies.",
+         "<b>Non-explicit invalidation:</b> nothing in between states the change outright."])
+table([["Conflict type", "What changes", "Example"],
+       ["<b>Type I</b> (co-referential)", "The same attribute gets a new value, which is implied but never named.",
+        "\"Based in Seattle\", later: setting up utilities at a new apartment in Austin."],
+       ["<b>Type II</b> (propagated)", "A change in attribute A makes a <i>different</i> attribute B invalid. "
+        "Neither B nor the A-to-B link is mentioned.",
+        "\"Cycles to work daily\", later: a broken leg. The commute memory is now unsafe."]], [36, 64, 70])
+
+H("B3. How the benchmark is built and scored")
+h("B3.1 Construction pipeline (paper Section 3.4)")
+table([["Step", "What happens"],
+       ["1. Base state", "Sample an attribute from a topic ontology. An LLM writes a persona and the old observation "
+        "m<sub>old</sub>, which clearly supports one value."],
+       ["2. Adversarial conflict", "A \"Logic Attacker\" LLM writes the new observation m<sub>new</sub> after a time gap. "
+        "It implies a new value (Type I) or changes an upstream attribute (Type II), without naming the target."],
+       ["3. Quality control", "A strict LLM judge checks plausibility, a real state-level conflict and implicitness, and "
+        "rejects pairs with obvious cues. Failed pairs are regenerated. Human experts then review and edit every instance."],
+       ["4. Haystack", "Each observation is wrapped in a natural 8-12 turn dialogue session. The two sessions are embedded "
+        "in a 50-session chronological history padded with filtered LongMemEval distractor sessions."]], [32, 138])
+P("In the released data, the old evidence always sits in sessions 0-14 and the new evidence in sessions 30-39, "
+  "about 27 sessions apart on average. A serialized history averages about 152K tokens, so every instance exceeds "
+  "GPT-4o-mini's 128K context window (Record #1).")
+h("B3.2 Three probes per scenario")
+table([["Probe", "Tests whether the model...", "Example (cycling scenario)"],
+       ["<b>SR</b>, State Resolution", "recognises, when asked directly, that the old belief is outdated",
+        "\"Based on the conversation history, does the user still commute by cycling?\""],
+       ["<b>PR</b>, Premise Resistance", "refuses a request that assumes the old state is still true",
+        "\"Since the user rides a bike every day, can you create a maintenance plan?\""],
+       ["<b>IPA</b>, Implicit Policy Adaptation", "applies the new state unprompted in an ordinary request",
+        "\"Can you suggest a commute plan for this week?\""]], [40, 62, 68])
+P("Each probe is a separate model call, so one answer cannot leak into another. An LLM judge "
+  "(Gemini-3.1-flash-lite) sees the old state, the new state and a hidden explanation, and marks each answer pass or "
+  "fail. It agreed with human labels 95.8% of the time (Cohen's kappa 0.915). <b>Overall</b> accuracy is the unweighted "
+  "mean of the six (type x probe) cells.")
+
+H("B4. What the paper found")
+table([["System (selection)", "T1 SR", "T1 PR", "T1 IPA", "T2 SR", "T2 PR", "T2 IPA", "Overall"],
+       ["GPT-4o-mini* (plain, full context)", "30.0", "0.0", "11.0", "9.5", "0.0", "1.5", "8.7"],
+       ["Gemini-3.1-pro (best plain LLM)", "92.0", "30.0", "71.0", "69.0", "14.0", "55.0", "55.2"],
+       ["Qwen3.5-9B", "36.0", "1.0", "21.5", "21.5", "0.0", "7.5", "14.6"],
+       ["LightMem (best framework, GPT-4o-mini)", "52.5", "1.0", "23.5", "21.5", "0.5", "7.5", "17.8"],
+       ["<b>CUPMem</b> (GPT-4o-mini)", "91.0", "<b>78.0</b>", "32.0", "<b>89.0</b>", "<b>75.0</b>", "43.0", "<b>68.0</b>"]],
+      [52, 16, 16, 16, 16, 16, 16, 22])
+P("* evidence-preserving truncation: both evidence sessions are kept and only distractors are removed. The "
+  "<b>GPT-4o-mini row is exactly what our B0 baseline reproduces</b>, and Part II is its first test.")
+h("B4.1 Three headline findings")
+bullets(["<b>Recognising is not applying.</b> SR and IPA scores diverge. Qwen3.5-27B scores 76.0% on Type I SR but "
+         "39.0% on Type I IPA.",
+         "<b>Premises are followed blindly.</b> PR is the weakest probe for almost every system. Gemini-3.1-pro falls "
+         "from 92.0% (SR) to 30.0% (PR) on Type I.",
+         "<b>Propagated conflicts are harder.</b> Type II is below Type I on almost every cell."])
+h("B4.2 The paper's explanations")
+bullets(["<b>Plain LLMs do not reconcile sessions (attention analysis, Qwen3.5-9B and 27B).</b> The query attends to "
+         "both evidence sessions well above a positional-noise baseline, but the new session barely attends to the "
+         "old one. Models route between the two sessions per query rather than updating a belief. Correct IPA answers "
+         "put relatively more attention on the new session, especially in middle layers.",
+         "<b>Memory frameworks see the evidence but do not act on it (the \"current-state adjudication gap\").</b> In "
+         "LightMem, the new evidence is retrieved in 77.5% of SR/PR cases. When it is written, the old memory appears in "
+         "its top-3 neighbours 60.5% of the time, yet only 3.3% of those old entries are marked for update. Old and new "
+         "memories end up side by side and nothing decides between them. In the paper's words, \"visibility does not "
+         "imply authority\"."])
+
+H("B5. CUPMem: the proposed fix")
+P("CUPMem (Current-state Updating and Propagation-aware Memory) turns memory into explicit state tracking. Its central "
+  "idea is to resolve conflicts <b>when new evidence is written</b>, not leave them for the answering model at query "
+  "time. Memories are stored in a fixed two-level schema (10 domains such as location_and_living or "
+  "health_and_mobility, each with typed slots), and each memory is marked active or stale.")
+table([["Stage", "What it does", "Which failure it targets"],
+       ["1. Write-side adjudication", "Extracts state-update candidates from each new session. An LLM adjudicator then "
+        "labels every related old memory KEEP, STALE, REPLACE or UNKNOWN. Stale memories are archived, not deleted. "
+        "A slot that is no longer safe but has no replacement becomes UNKNOWN_CURRENT.",
+        "The adjudication gap: new evidence gains the authority to retire old memories."],
+       ["2. Propagation-aware search", "Chooses which old memories to re-check: the union of the <i>Direct</i> slots "
+        "touched, the <i>Affected</i> regions an LLM predicts may change (e.g. health affects commute), and a bounded "
+        "embedding-similarity fallback <i>Global<sub>k</sub></i>.", "Type II: invalidations in a different slot."],
+       ["3. Constrained readout", "At query time, analyses the query's presupposed states. A verifier labels the premise "
+        "SUPPORTED, OUTDATED or UNRESOLVED. Only active memories ground the answer, and outdated premises are blocked.",
+        "PR: answering on a false premise."]], [32, 92, 46])
+P("This design explains why CUPMem's largest gains are on PR (78.0% and 75.0% versus near zero for the baselines). "
+  "The paper reports a cost of about $0.37 per instance on GPT-4o-mini. Its LLM calls go to an OpenAI-compatible "
+  "endpoint, and it uses a local embedding model (all-MiniLM-L6-v2).")
+
+H("B6. This project: what we test and why")
+P("Working title: <b>\"Does Write-Side State Adjudication Survive Small Models? Reproducing and Stress-Testing STALE "
+  "and CUPMem.\"</b> CUPMem's 68.0% rests on many LLM judgements made at write time (extraction, affected-region "
+  "prediction, adjudication), all by GPT-4o-mini. The project asks whether the result holds up, whether it survives "
+  "cheaper adjudicators, and where it breaks.")
+table([["RQ", "Question", "How we answer it"],
+       ["RQ1", "Do the paper's numbers reproduce?", "Three-way comparison: the paper's figures, the official released code "
+        "re-run by us, and our independent reimplementation from the paper's description."],
+       ["RQ2", "Does CUPMem still work with 3-9B open models as the adjudicator?", "Swap the write-side model for small "
+        "open models through the same gateway. Malformed JSON outputs are counted as data, not hidden."],
+       ["RQ3", "Which stage fails first?", "Per-stage traces: extraction, then candidate search, then adjudication, "
+        "then readout."],
+       ["RQ4", "What does each component contribute, and at what cost?", "Ablate each stage; per-stage token, latency "
+        "and dollar accounting."],
+       ["RQ5", "Can it handle two-hop cascades (A changes B, which changes C)?", "A small new two-hop extension of the data."]],
+      [12, 60, 98])
+h("B6.1 Open question with the largest impact on RQ1")
+P("The official CUPMem runner defaults to " + M("--session-mode relevant_only") + ". In that mode it ingests only the "
+  "two gold evidence sessions and skips the 48 distractors that every baseline must process. The paper does not say "
+  "which mode produced 68.0%. Its $0.37-per-instance cost suggests the full 50-session mode, but this has to be "
+  "measured. We will run both modes and report " + M("relevant_only") + " as an explicit oracle-retrieval setting.")
+h("B6.2 Experiment ladder and where this record fits")
+table([["Stage", "What", "Status"],
+       ["B0 baseline", "GPT-4o-mini over the full truncated history (the paper's 8.7% row)",
+        "<b>This record:</b> first real API runs; 4-instance smoke test answered"],
+       ["Judge", "Gemini-3.1-flash-lite with the official prompt", "Code ready; waiting for an API key"],
+       ["E1", "Full 400-instance reproduction of B0 and CUPMem (paper Table 2 rows)", "Next, after a 50-instance dev run"],
+       ["Official CUPMem", "Wrap and run the released code in both session modes", "To do"],
+       ["Independent CUPMem", "Reimplementation from the paper and Appendix F", "To do"],
+       ["RQ2-RQ5", "Small adjudicators, stage attribution, ablations, two-hop cascades", "Later weeks"]], [32, 84, 54])
+P("The project follows a 13-week plan that began on 28 September 2026. The aim is an arXiv preprint around late "
+  "December 2026, targeting the ML Reproducibility Challenge (TMLR) or an ACL/EMNLP workshop. Every deviation from the "
+  "paper or the official code is recorded in " + M("notes/reproducibility_log.md") + ".")
 
 # ======================================================================= CHANGES
 part("Part I: What changed")

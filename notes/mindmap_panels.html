@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STALE Project Map</title>
+<!-- Builds project_mindmap_panels.pdf. Render from the repo root with:
+     chrome --headless --disable-gpu --no-pdf-header-footer --virtual-time-budget=8000
+            --print-to-pdf=project_mindmap_panels.pdf notes/mindmap_panels.html
+     Content lives in BRANCHES below; facts come from notes/reproducibility_log.md. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --panel: #ffffff;
+    --ink: #1c2321;
+    --muted: #5d6662;
+    --faint: #8a918d;
+    --rule: #e3e1db;
+    --done: #2e7d4f;
+    --todo: #b8791f;
+    --open: #b03a2e;
+    --hub: #1c2321;
+    --serif: "Newsreader", Georgia, serif;
+    --sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .page { width: 1880px; padding: 48px 40px 56px; }
+
+  /* header */
+  .kicker { font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  h1 { font: 600 44px/1.08 var(--serif); margin: 12px 0 8px; letter-spacing: -.01em; }
+  .sub { font-size: 17px; color: var(--muted); margin: 0 0 18px; max-width: 980px; line-height: 1.5; }
+  .legend { display: flex; gap: 22px; align-items: center; font: 12px var(--mono); color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .howto { margin-left: 18px; padding-left: 22px; border-left: 1px solid var(--rule); font-family: var(--sans); font-size: 13px; }
+
+  /* map */
+  .map {
+    position: relative;
+    display: grid;
+    grid-template-columns: 560px 1fr 560px;
+    column-gap: 130px;
+    margin-top: 30px;
+    padding: 36px 34px;
+    background: #fbfbf9;
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+  }
+  .col { display: flex; flex-direction: column; gap: 26px; position: relative; z-index: 1; }
+  .center { position: relative; z-index: 1; display: flex; flex-direction: column; justify-content: center; }
+  svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; overflow: visible; }
+
+  /* hub */
+  .hub {
+    background: var(--hub); color: #f4f3ef; border-radius: 16px;
+    padding: 30px 30px 26px; text-align: center;
+    box-shadow: 0 14px 40px rgba(28,35,33,.18);
+  }
+  .hub h2 { font: 600 30px/1.15 var(--serif); margin: 0 0 10px; }
+  .hub .tag { font: 12px/1.5 var(--mono); color: #b7bdb9; }
+  .hub p { font-size: 14.5px; line-height: 1.55; color: #d9dcd9; margin: 16px 0 0; text-align: left; }
+  .hub p + p { margin-top: 10px; }
+  .hub b { color: #fff; }
+  .lead-q { font: italic 500 23px/1.3 var(--serif); text-align: center; margin: 0 6px 22px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 22px; }
+  .stat { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 10px; text-align: center; }
+  .stat .n { font: 600 26px/1 var(--serif); }
+  .stat .l { font: 11px/1.3 var(--mono); color: var(--muted); margin-top: 6px; text-transform: uppercase; letter-spacing: .06em; }
+
+  /* panels */
+  .panel {
+    background: var(--panel);
+    border: 1.5px solid color-mix(in srgb, var(--c) 55%, white);
+    border-radius: 12px;
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--c) 10%, transparent);
+    overflow: hidden;
+    break-inside: avoid;
+  }
+  .panel header { padding: 16px 20px 12px; border-bottom: 1px solid color-mix(in srgb, var(--c) 18%, white); background: color-mix(in srgb, var(--c) 5%, white); }
+  .panel .top { display: flex; align-items: baseline; gap: 10px; }
+  .panel .num { font: 500 13px var(--mono); color: var(--c); }
+  .panel h3 { font: 600 23px/1.15 var(--serif); color: var(--c); margin: 0; flex: 1; }
+  .panel .count { font: 12px var(--mono); color: var(--faint); }
+  .panel .intro { margin: 8px 0 0; font-size: 13.5px; line-height: 1.5; color: var(--muted); font-style: italic; }
+  .panel ul { list-style: none; margin: 0; padding: 6px 20px 10px; }
+  .panel li { display: grid; grid-template-columns: 14px 1fr; column-gap: 8px; padding: 11px 0; border-bottom: 1px dashed var(--rule); }
+  .panel li:last-child { border-bottom: 0; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 6px; background: color-mix(in srgb, var(--c) 45%, white); }
+  .dot.done { background: var(--done); }
+  .dot.todo { background: var(--todo); }
+  .dot.open { background: var(--open); }
+  .item { font-size: 14.5px; line-height: 1.45; font-weight: 500; }
+  .ctx { grid-column: 2; font-size: 13px; line-height: 1.5; color: var(--muted); margin-top: 4px; }
+  code { font: 12.5px var(--mono); background: #f0efeb; border-radius: 4px; padding: 1px 5px; color: var(--ink); }
+  .ctx code { font-size: 11.5px; }
+  .ctx b { color: var(--ink); font-weight: 600; }
+
+  footer { margin-top: 18px; font: 11.5px var(--mono); color: var(--faint); display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="kicker">Project map · arXiv 2605.06527 · as of 12 Oct 2026</div>
+  <h1>Does Write-Side State Adjudication Survive Small Models?</h1>
+  <p class="sub">Reproducing and stress-testing STALE and CUPMem. Every branch of the map is a panel; every item carries a line of context explaining what it means and why it matters.</p>
+  <div class="legend">
+    <span><i class="dot done" style="display:inline-block;margin:0"></i>done</span>
+    <span><i class="dot todo" style="display:inline-block;margin:0"></i>to do</span>
+    <span><i class="dot open" style="display:inline-block;margin:0"></i>open question</span>
+    <span class="howto">Read the left column for <b>what we are reproducing and how</b>, the right column for <b>what we have built and learned</b>. Panels are numbered in reading order.</span>
+  </div>
+
+  <div class="map" id="map">
+    <svg class="wires" id="wires"></svg>
+    <div class="col" id="left"></div>
+    <div class="center">
+      <p class="lead-q">Can a cheap model reliably decide which memories are still true?</p>
+      <div class="hub" id="hub">
+        <h2>STALE / CUPMem reproduction</h2>
+        <div class="tag">Reproduction + stress test · MLRC / TMLR · ACL/EMNLP workshops</div>
+        <p>Assistants keep long-term memories about their users. New information can make an old memory false <b>without ever contradicting it</b>, and the STALE benchmark shows most models miss this.</p>
+        <p>The paper's fix, <b>CUPMem</b>, decides what is still true at the moment memory is written. It scores 68.0%, the best on STALE. We check whether that result reproduces, and whether it still holds when the deciding model is small and cheap.</p>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="n">68.0%</div><div class="l">CUPMem, reported</div></div>
+        <div class="stat"><div class="n">55.2%</div><div class="l">Best frontier model</div></div>
+        <div class="stat"><div class="n">8.7%</div><div class="l">GPT-4o-mini B0</div></div>
+      </div>
+    </div>
+    <div class="col" id="right"></div>
+  </div>
+
+  <footer><span>Sources: notes/reproducibility_log.md · README.md · configs/</span><span>Built from notes/mindmap_panels.html</span></footer>
+</div>
+
+<script>
+// status: "done" | "todo" | "open" | "" (plain fact)
+const BRANCHES = {
+  left: [
+    { title: "Source paper", color: "#2f6b8a",
+      intro: "Chao et al., STALE, arXiv 2605.06527 (May 2026). Code (MIT) and data (CC BY 4.0) are both public, including the full CUPMem implementation.",
+      items: [
+        ["", "<b>STALE</b>: can agents tell when memories are no longer valid?",
+         "A long-term assistant stores facts about its user. The benchmark asks whether it notices when one of those facts has quietly stopped being true."],
+        ["", "<b>Implicit conflict</b>: a later observation invalidates an old memory with no explicit negation",
+         "Example from the data: a user mentioned a relationship, and much later talks about speed-dating. Nobody says \"we broke up\"; the agent has to infer it."],
+        ["", "400 scenarios, 1,200 queries, contexts up to ~150K tokens",
+         "Three queries (probes) per scenario, asked over a history far too long to skim. Our own count: 151.7K tokens on average, 164.9K max."],
+        ["", "Probes: <b>SR</b> state resolution · <b>PR</b> premise resistance · <b>IPA</b> policy adaptation",
+         "SR asks what is true now. PR slips the outdated fact into the question as a premise to see if the model goes along with it. IPA checks whether its advice adapts to the new state."],
+        ["", "Best frontier model 55.2% overall; GPT-4o-mini B0 8.7%",
+         "Even the strongest model fails almost half the time. 8.7% is the number our B0 run must match (Table 2: T1 30.0 / 0.0 / 11.0, T2 9.5 / 0.0 / 1.5)."],
+        ["", "<b>CUPMem</b>: write-time state consolidation + propagation-aware search, 68.0%",
+         "The paper's own method and the best score on STALE. This is the headline number RQ1 tries to reproduce."],
+      ]},
+    { title: "Dataset", color: "#3a5aa0",
+      intro: "STALEproj/STALE on Hugging Face (HF sha 617c51dc). Every figure below was verified on our local copy.",
+      items: [
+        ["done", "<code>T1_T2_400_FULL.json</code>, 306 MB, CC BY 4.0",
+         "The whole benchmark is one file. The licence lets us publish results and derived subsets with attribution."],
+        ["done", "200 Type I + 200 Type II instances, 50 sessions each",
+         "The two types are scored separately. In the smoke test they failed differently: Type I answers reaffirmed the old state, Type II answers claimed the history never mentioned it."],
+        ["done", "Gold evidence: <code>[idx_old, idx_new]</code>, about 27 sessions apart",
+         "Two sessions matter per instance: the one that set the old state and the one that silently invalidated it. The other 48 are distractors."],
+        ["done", "Mean 151.7K tokens (max 164.9K); every instance exceeds 128K",
+         "GPT-4o-mini's window is 128K, so B0 always has to truncate. This matches the asterisk on GPT-4o-mini in the paper's Table 2."],
+      ]},
+    { title: "Evaluation protocol", color: "#5b6b2e",
+      intro: "Taken from the official code rather than the paper text, so our scores are directly comparable to theirs.",
+      items: [
+        ["done", "One joint judge call per instance, temperature 0, JSON mode",
+         "The judge sees all three answers for an instance at once and returns a verdict for each. Fixed settings keep grades stable across reruns."],
+        ["open", "Judge: Gemini-3.1-flash-lite (exact model id unconfirmed)",
+         "The paper names the model but not the API id string. A different snapshot could shift every score, so this needs confirming before E1."],
+        ["done", "Overall = unweighted mean of 6 (type × dimension) cells",
+         "2 types × 3 probes. Each cell counts equally however many instances it has; <code>eval/stats.py</code> computes it the same way."],
+        ["done", "Truncation to 128K: head ≤2, tail ≤2, then random between evidence sessions",
+         "Reserve 2,048 + 512 tokens for the answer, then drop sessions in that order until the history fits. The two evidence sessions are never dropped. In practice 8–11 sessions go per request."],
+      ]},
+    { title: "Research questions", color: "#8a5a1f",
+      intro: "Ordered so each builds on the last: the stress tests only mean something once RQ1 has landed.",
+      items: [
+        ["", "<b>RQ1</b> Reproduction: paper vs official code vs our reimplementation",
+         "Because the code is public, this is a three-way comparison. Any gap can be pinned on the paper's description, the code, or our rebuild."],
+        ["", "<b>RQ2</b> Small 3–9B open adjudicators",
+         "CUPMem uses an LLM to decide, at write time, what is still true. This tests whether cheap open models can make those calls or whether the method needs a frontier model. It is the paper's title question."],
+        ["", "<b>RQ3</b> Stage-wise failure attribution",
+         "When an answer is wrong, locate the stage that failed: the write-time decision, the propagation of the invalidation, retrieval, or the final answer."],
+        ["", "<b>RQ4</b> Ablations and cost",
+         "Remove components one at a time and measure tokens and dollars per instance. The paper reports about $0.37 per instance for CUPMem on GPT-4o-mini."],
+        ["", "<b>RQ5</b> 2-hop cascades",
+         "STALE's conflicts are one step deep. In a 2-hop cascade the invalidated fact implied a second fact, which should now be dropped too. TEPA's authors call multi-hop out of scope, so this is open ground."],
+      ]},
+    { title: "Systems under test", color: "#3f7a45",
+      intro: "Everything below runs through the same data, prompts and judge, so differences in score come from the system itself.",
+      items: [
+        ["done", "<b>B0</b> full context + evidence-preserving truncation",
+         "GPT-4o-mini reads the whole history, minus the sessions truncation removes. The baseline that every memory system has to beat."],
+        ["todo", "Official CUPMem wrapper (reference run)",
+         "The authors' own code, run by us. It must be run in both session modes, because the default mode only reads the gold sessions (see Open questions)."],
+        ["todo", "<b>M</b> independent CUPMem reimplementation",
+         "Written from the paper, not the code. It tests whether the paper says enough to rebuild the method. Lives in <code>memory/cupmem/</code>."],
+        ["todo", "<b>B1</b> naive RAG",
+         "Embed the sessions and retrieve the closest ones for each probe. Shows how much of CUPMem's gain retrieval alone would give."],
+        ["todo", "<b>B2</b> Mem0",
+         "A widely used open-source memory layer, standing in for what practitioners deploy today."],
+        ["open", "StateAuditor as a possible readout-side baseline",
+         "Checks memory when it is read, not when it is written: a direct contrast for a paper about write-side adjudication. Not yet decided."],
+      ]},
+    { title: "Related work", color: "#6a6f3a",
+      intro: "Recent papers on stale memory, checked 27 Sep 2026. Neither covers what RQ2–RQ5 ask.",
+      items: [
+        ["", "<b>StateAuditor</b> (2608.01619): readout-side audit, +5.0 on STALE",
+         "Sun & He. Runs on full STALE but does not touch CUPMem, small adjudicators or cascades. Candidate baseline (see Systems under test)."],
+        ["", "<b>TEPA</b> (2608.07429): revokes keyed precedents; flags multi-hop as out of scope",
+         "Zhou et al. Evaluated on MemoryAgentBench-style settings, not STALE. Its stated limit on multi-hop is the gap RQ5 fills."],
+      ]},
+  ],
+  right: [
+    { title: "Harness", color: "#7a3f6e",
+      intro: "<code>src/stale_repro/</code>: the shared code every system runs through. Offline tests use a scripted fake LLM, so they need no API keys.",
+      items: [
+        ["done", "<code>data/loader.py</code> records → Instance/Session/Probe, stratified subsets",
+         "Turns the 306 MB JSON into typed objects and draws deterministic, type-balanced subsets, such as the 50-instance dev set (25 per type)."],
+        ["done", "<code>llm/gateway.py</code> sqlite cache, JSON decoding, usage, TPM limiter",
+         "Every LLM call goes through here. The cache makes reruns free and identical; the limiter was added after we hit the 200K tokens/min account cap."],
+        ["done", "<code>memory/base.py</code> MemorySystem interface + official prompts",
+         "One interface for every system, so B0, B1, B2 and CUPMem swap in by config. Response prompts are copied verbatim from App. E.1."],
+        ["done", "<code>eval/judge.py</code> official joint judge, verbatim prompt",
+         "Uses the authors' judge prompt word for word, so our grades mean the same thing as theirs."],
+        ["done", "<code>eval/stats.py</code> 6-cell mean, bootstrap CI, McNemar",
+         "Overall is computed exactly as in the paper. Bootstrap gives error bars; McNemar tests whether two systems really differ on the same instances."],
+        ["done", "<code>runner.py</code> config-driven, resumable, parallel, <code>--no-judge</code>",
+         "One YAML per experiment, and interrupted runs pick up where they stopped. <code>--no-judge</code> lets us generate answers now and grade them once a Gemini key arrives."],
+        ["todo", "Diagnostics / attribution module",
+         "Needed for RQ3. It will read the per-probe traces the runner already saves in <code>answers.jsonl</code>."],
+      ]},
+    { title: "Findings so far", color: "#2f6b8a",
+      intro: "From the first API runs on 3 Oct 2026 (B0, GPT-4o-mini).",
+      items: [
+        ["done", "<code>gpt-4o-mini-2024-07-18</code> still served, pinned",
+         "The <code>gpt-4o-mini</code> alias resolves to this snapshot. Pinning it means a silent model update cannot change results mid-project, and no substitute model is needed."],
+        ["done", "200K TPM limit ≈ 1 B0 call/min: dev 2.5 h, full E1 ≈ 20 h",
+         "Each call sends ~123K prompt tokens, and OpenAI counts ~148K because it reserves 16,384 output tokens. Runtime, not money, is the bottleneck."],
+        ["done", "Truncation parity: estimate within 2 tokens of billed",
+         "123,209 estimated vs 123,211 billed. Our truncation keeps exactly the sessions the official code would."],
+        ["done", "Smoke test: 4/4 instances, 1.49M input tokens, ≈ $0.23",
+         "12 real calls end to end. With the limiter in place the resumed run hit no rate-limit errors."],
+        ["done", "PR answers accept false premises; SR reaffirms old state",
+         "E.g. planning anniversary dates for a user who has since started speed-dating. Consistent with the paper's near-zero PR for GPT-4o-mini; not yet graded by the judge."],
+      ]},
+    { title: "Open questions", color: "#a5392d",
+      intro: "Places where the paper and the code disagree or say nothing. Each needs an answer before the reproduction claim is final.",
+      items: [
+        ["open", "<b>CUPMem session mode</b>: default <code>relevant_only</code> ingests only gold sessions. Which mode gave 68%?",
+         "<code>relevant_only</code> skips the 48 distractors, which makes the task far easier. The reported <b>$0.37/instance</b> at $0.15/M input implies 2M+ tokens, too many for 2 sessions, so it points to <code>full</code>. Plan: run both, report <code>relevant_only</code> as an oracle ablation, ask the authors. Possibly the headline finding."],
+        ["open", "Target-model temperature not stated in the paper",
+         "The official code sends none, so OpenAI's default of 1.0 applies. We use 0 (deviation D3)."],
+        ["open", "Judge errors silently scored as FAIL in official code",
+         "A failed judge call lowers the score and leaves no trace. We record them instead (deviation D2)."],
+        ["open", "KEEP/STALE/REPLACE/UNKNOWN (§5) vs ADD/REFINE/REPLACE/NO_OP (App. F.2)",
+         "The paper describes CUPMem's decision labels two different ways. Settle it against <code>cup_mem/write/</code> before building M."],
+        ["open", "Embedding model <code>all-MiniLM-L6-v2</code> only in README",
+         "The embedder shapes what retrieval finds. M has to use the same one, and the paper does not say so."],
+        ["todo", "Find and read <i>The Memory Trust Gap</i>",
+         "Cited in the blueprint but not yet located. Also check papers citing STALE."],
+      ]},
+    { title: "Deviations logged", color: "#5b4a9a",
+      intro: "Every place we differ from the official code, with the reason. This list becomes the paper's reproducibility statement.",
+      items: [
+        ["done", "<b>D1</b> truncation RNG seeded by (seed, uid, dim)",
+         "The official code uses unseeded <code>random.choice</code>, so two runs can drop different sessions. Seeding makes reruns exact."],
+        ["done", "<b>D2</b> judge errors recorded and re-judged on resume",
+         "Stored in <code>Verdict.error</code>, retried on resume, and counted in the run summary instead of becoming silent FAILs."],
+        ["open", "<b>D3</b> target temperature 0 (official: API default)",
+         "Needed for determinism and caching. Still to decide: also run at the API default for exact E1 fidelity?"],
+        ["done", "<b>D4</b> tiktoken + o200k fallback, same as official",
+         "Listed for completeness: no real deviation. Token counts match the API within 2 tokens."],
+      ]},
+    { title: "Timeline", color: "#8a3a3a",
+      intro: "A 13-week plan tied to UTokyo PhD applications.",
+      items: [
+        ["", "13-week blueprint, started 28 Sep 2026",
+         "Runs to the end of December, in line with the arXiv target."],
+        ["done", "Week 1: artifacts found, data verified, harness built",
+         "Finding the public code and data turned RQ1 into a three-way comparison."],
+        ["done", "3 Oct: first API runs, B0 smoke test",
+         "Confirmed truncation, rate limits and cost on 4 instances before scaling to the 50-instance dev run."],
+        ["todo", "Nov 2026: email UTokyo professors",
+         "Aim to have RQ1 numbers to show by then."],
+        ["todo", "Late Dec 2026: post to arXiv",
+         "Then submit to MLRC / TMLR or an ACL/EMNLP workshop."],
+      ]},
+  ],
+};
+
+let n = 0;
+function panel(b) {
+  n += 1;
+  const el = document.createElement("section");
+  el.className = "panel";
+  el.style.setProperty("--c", b.color);
+  el.innerHTML = `
+    <header>
+      <div class="top"><span class="num">${String(n).padStart(2, "0")}</span><h3>${b.title}</h3><span class="count">${b.items.length}</span></div>
+      <p class="intro">${b.intro}</p>
+    </header>
+    <ul>${b.items.map(([s, item, ctx]) =>
+      `<li><i class="dot ${s}"></i><div class="item">${item}</div><div class="ctx">${ctx}</div></li>`).join("")}</ul>`;
+  return el;
+}
+for (const side of ["left", "right"])
+  for (const b of BRANCHES[side]) document.getElementById(side).appendChild(panel(b));
+
+function wires() {
+  const map = document.getElementById("map").getBoundingClientRect();
+  const hub = document.getElementById("hub").getBoundingClientRect();
+  const svg = document.getElementById("wires");
+  let paths = "";
+  for (const side of ["left", "right"]) {
+    const panels = [...document.querySelectorAll(`#${side} .panel`)];
+    panels.forEach((p, i) => {
+      const r = p.getBoundingClientRect();
+      const color = p.style.getPropertyValue("--c");
+      const spread = (i - (panels.length - 1) / 2) * 14;
+      const x1 = (side === "left" ? hub.left : hub.right) - map.left;
+      const y1 = hub.top + hub.height / 2 + spread - map.top;
+      const x2 = (side === "left" ? r.right : r.left) - map.left;
+      const y2 = r.top + 34 - map.top;
+      const mx = (x1 + x2) / 2;
+      paths += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="2" stroke-opacity=".7"/>`;
+      paths += `<circle cx="${x2}" cy="${y2}" r="4" fill="${color}"/>`;
+    });
+  }
+  svg.innerHTML = paths;
+  // size the printed page to the content so the whole map lands on one page
+  const page = document.querySelector(".page");
+  const style = document.getElementById("page-size") || document.head.appendChild(Object.assign(document.createElement("style"), { id: "page-size" }));
+  style.textContent = `@page { size: ${page.offsetWidth}px ${page.offsetHeight + 2}px; margin: 0; }`;
+}
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(wires);
+window.addEventListener("resize", wires);
+</script>
+</body>
+</html>
