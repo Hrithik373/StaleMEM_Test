@@ -1,7 +1,7 @@
 # Can Long-Context Models Track Implicitly Changing User States?
-## A Preliminary Reproduction on the STALE Benchmark
+## A Zero-Cost Reproduction Study of the STALE Benchmark
 
-**Research manuscript — interim version, 26 October 2026**
+**Research manuscript — revised version, 30 October 2026**
 
 **Authors:** Hrithik Ghosh  
 **Affiliations:** KIIT Institute of Technology  
@@ -9,93 +9,136 @@
 
 ## Abstract
 
-Long-term assistants must do more than retrieve facts from conversation history: they must recognize when later evidence makes an earlier memory outdated, even when the new evidence does not explicitly negate it. STALE evaluates this capability through two implicit-conflict types and three probes: State Resolution (SR), Premise Resistance (PR), and Implicit Policy Adaptation (IPA). We report a preliminary reproduction of the plain long-context baseline (B0) using Gemini-3.1-flash-lite on a deterministic, type-balanced sample of 50 STALE instances (25 per conflict type). We use the released response prompts and joint evaluator prompt, with temperature set to zero for generation and evaluation. Mean accuracy across the six type-by-probe cells is 26.0% (95% instance-bootstrap interval: 19.3–33.3%), compared with 22.4% in the paper's full-dataset Gemini-3.1-flash-lite result. The published values fall within our intervals for the four SR and IPA cells; PR is scored 0/25 in each type in our sample. These results are descriptive and do not establish a performance difference or a full reproduction: the sample is small, the target temperature differs from the unspecified setting in the original protocol, and the target and evaluator are the same model. A preliminary review also flags possible evaluator leniency in some SR passes. We additionally characterize context lengths across all 400 benchmark histories: all exceed 128,000 tokens, with a mean of 151,784 tokens. The evidence documents a working baseline pipeline, but does not evaluate CUPMem or answer whether small models can replace its adjudicator.
+Long-term conversational assistants must recognize when later evidence silently invalidates an earlier memory of the user. The STALE benchmark evaluates this ability with 400 implicit-conflict scenarios, two conflict types and three probes: State Resolution (SR), Premise Resistance (PR) and Implicit Policy Adaptation (IPA). Its authors also report that CUPMem, a memory system that adjudicates state at write time, raises GPT-4o-mini from 8.7% to 68.0% overall accuracy. We report the first stage of an independent reproduction, carried out under a zero-cost compute budget. We release a tested harness that reproduces the official evaluation protocol, including evidence-preserving truncation; our token estimate matches billed prompt tokens to within 2 tokens on all 12 requests tested. On a deterministic, type-balanced 50-instance subset, the plain long-context Gemini-3.1-flash-lite baseline reaches 26.0% overall (95% instance-bootstrap interval 19.3–33.3%) against the paper's 22.4%, using only the free Gemini API tier. The published value lies inside our interval for the overall score and all four SR and IPA cells; PR is 0/25 in both types. We also show that the official CUPMem runner's default `relevant_only` mode exposes the system to only 2.1% of each history, whereas the paper's reported cost implies full-history ingestion. Our results are descriptive. The sample is small, target decoding differs from the unspecified original setting, and the target and judge are the same model. We do not yet evaluate CUPMem.
 
-**Index Terms—** conversational memory, implicit conflict, stale information, long-context models, benchmark reproduction, LLM-as-judge.
+**Index Terms—** conversational memory, implicit conflict, stale information, long-context language models, reproducibility, LLM-as-a-judge.
 
 ## 1. Introduction
 
-Conversational assistants are increasingly expected to remember useful information about a user across sessions and to adapt as that user's circumstances change. Memory therefore involves more than retrieving a relevant sentence. A memory that was once true can become invalid without an explicit correction. A user might describe a regular cycling commute and, weeks later, mention an injury that makes cycling inappropriate in the near term. A later commute-planning answer should reflect the injury even if no session says “I no longer cycle.” Retrieval can surface the old memory correctly while still producing an inappropriate response.
+Conversational assistants are increasingly expected to remember users across sessions and adapt as their circumstances change. Remembered facts, however, expire. A user who once described a daily cycling commute will later mention a broken leg; they will not ask the assistant to forget the commute. A later request for a commute plan should still reflect the injury. Retrieval alone cannot guarantee this: a system can surface the old memory correctly and still act on it.
 
-STALE (State Tracking and Latent Evaluation) formalizes this problem as **implicit conflict**: a later observation changes the validity of an earlier state without syntactically negating it [1]. Its 400 scenarios distinguish two types. In Type I, old and new observations concern the same underlying attribute. In Type II, the new observation changes a related attribute and requires an inference that an older belief or plan should also change. The benchmark evaluates each scenario with three probes: State Resolution (SR) tests whether the model recognizes that an earlier belief may no longer hold; Premise Resistance (PR) embeds an outdated belief in a question; and Implicit Policy Adaptation (IPA) tests whether a recommendation or action accommodates the updated state.
+STALE [1] formalizes this failure as an **implicit conflict**: a later observation changes the validity of an earlier state without negating it. Across 15 evaluated systems, the strongest reaches only 55.2% overall accuracy. Plain GPT-4o-mini reaches 8.7%, and most memory frameworks built on it stay below 10%. The authors trace the frameworks' failure to a *current-state adjudication gap*: new evidence is retrieved but never retires the old memory. Their prototype, CUPMem, closes this gap at write time and reports 68.0% overall with the same GPT-4o-mini backbone, including 78.0% and 75.0% on PR for the two conflict types.
 
-The STALE authors report that ordinary models perform poorly on these probes and report 68.0% overall accuracy for CUPMem, a memory framework that adjudicates state during memory writing [1]. The present project was initiated to reproduce and stress-test those findings, with particular interest in smaller adjudicators. The work recorded so far supports a narrower, preliminary study of a plain long-context baseline.
+This paper reports the first stage of a reproduction and stress test of these findings. The wider project asks five questions: whether the results reproduce (RQ1); whether write-side adjudication survives 3–9B open adjudicators (RQ2); which pipeline stage fails first (RQ3); what each component contributes and costs (RQ4); and whether CUPMem handles two-hop cascades (RQ5). Here we report the work completed for RQ1 under a zero-cost budget, together with the harness on which the remaining questions will run.
 
-### 1.1 Research questions and scope
+**Contributions.** This paper makes five contributions:
 
-This manuscript addresses the following limited question:
-
-> How does a plain long-context Gemini-3.1-flash-lite baseline perform on a reproducible, 50-instance STALE subset when evaluated with the released prompts and judge rubric?
-
-We also characterize the context-length burden of the full benchmark. We do **not** report a new CUPMem result, a small-adjudicator experiment, or a memory-system comparison. The paper's CUPMem score is included only as published context and is not an outcome of this study.
-
-### 1.2 Contributions
-
-This interim study makes three bounded contributions:
-
-1. It documents an executable B0 evaluation pipeline using the released STALE prompts, a deterministic type-balanced subset, and the released joint-judge rubric.
-2. It reports cell-level performance with instance-clustered bootstrap intervals, alongside the full-benchmark Gemini reference values.
-3. It quantifies serialized-history lengths over the 400-instance benchmark and records the implications for a 128,000-token baseline context limit.
+1. An open, tested reproduction harness that implements the released STALE protocol, verified against the provider's own token accounting (Section III).
+2. A reproduction of the paper's Gemini-3.1-flash-lite long-context row on a 50-instance subset, run entirely on a free API tier, with cell-level bootstrap intervals (Section V-C).
+3. Pilot evidence for the GPT-4o-mini baseline, including exact truncation parity and qualitative failure patterns (Sections V-A and V-B).
+4. A full-benchmark analysis of context length and of CUPMem's ingestion modes, identifying an unstated setting that bears on the headline 68.0% result (Section V-D).
+5. A complete deviation log and an evaluator audit signal that later stages must address (Sections IV-E and V-F).
 
 ## 2. Background and related work
 
-### 2.1 From retrieval to state tracking
+### 2.1 The STALE benchmark
 
-Many conversational-memory evaluations emphasize whether a system can recover information from prior dialogue. STALE focuses on a distinct failure condition: the system may retrieve an old fact yet fail to determine whether it remains valid after later, indirectly related evidence. This distinction matters for memory architectures that rank content by relevance. Similarity to a query does not, by itself, establish that a retrieved fact is current.
+Each STALE instance pairs an old observation with a new observation that satisfy two axioms: the beliefs they support are incompatible, and no intermediate utterance resolves the conflict explicitly [1]. Instances were generated in four steps: a base state sampled from a topic ontology; an adversarial conflict written by a "Logic Attacker" language model; LLM-based quality control with regeneration; and packaging of both observations into natural 8–12-turn sessions embedded in a 50-session history. The remaining sessions are filtered distractors drawn from LongMemEval [2]. Every instance was reviewed by human experts.
 
-STALE's benchmark and paper position implicit conflict as a problem of tracking latent user state over temporally separated conversations. In Type I conflicts, the relevant update concerns the same attribute; in Type II, an update has consequences for a different, related attribute. Its three probes separate explicit recognition, resistance to stale premises, and downstream behavior [1].
+In **Type I** (co-referential) conflicts, the same attribute takes a new value that is implied but never named, e.g., "based in Seattle" followed by setting up utilities in Austin. In **Type II** (propagated) conflicts, a change in one attribute invalidates a different one, e.g., a broken leg invalidating a cycling commute.
 
-### 2.2 Write-side adjudication and CUPMem
+Each instance is probed three times in separate calls. **SR** asks directly whether the old belief still holds. **PR** poses a request that presupposes the old state. **IPA** poses an ordinary request whose safe answer depends on the new state. A Gemini-3.1-flash-lite judge receives the old state, the new state and a hidden explanation and grades all three answers in one call. It agreed with 240 human labels 95.8% of the time (Cohen's kappa 0.915). Overall accuracy is the unweighted mean of the six type-by-probe cells.
 
-CUPMem is the state-aware memory framework proposed with STALE. The paper describes structured state consolidation and propagation-aware search as mechanisms for identifying stale memories and updating related beliefs. Its reported overall score is 68.0%, compared with 22.4% for the paper's Gemini-3.1-flash-lite long-context row [1]. These are published results, not results from the experiments reported here. In particular, no official CUPMem run or independent reimplementation was complete at manuscript preparation.
+### 2.2 Findings of the original study
 
-### 2.3 Reproduction focus
+Three findings frame our work [1]. Recognition does not imply application: Qwen3.5-27B scores 76.0% on Type I SR but 39.0% on Type I IPA. PR is the weakest probe for almost every system; Gemini-3.1-pro falls from 92.0% (SR) to 30.0% (PR) on Type I. Type II trails Type I almost everywhere. An attention analysis of Qwen3.5 models finds strong query-to-evidence attention but weak attention from the new session to the old one, suggesting that models route between evidence per query rather than reconcile it. For memory frameworks, LightMem retrieves the new evidence in 77.5% of SR and PR cases; when that evidence is written, the old memory appears among its top-3 neighbours 60.5% of the time, yet only 3.3% of those entries are marked for update.
 
-The present study restricts itself to the unaugmented long-context condition, B0. This gives a reproducible reference point for subsequent comparisons but cannot test the central architectural claim about write-time adjudication. A direct follow-up should compare B0 with the official CUPMem implementation, a separately implemented version, and appropriate retrieval baselines under matched evidence access and evaluation settings.
+### 2.3 CUPMem
 
-## 3. Benchmark and methods
+CUPMem stores memories in a fixed two-level schema of ten state domains with typed single- or multi-valued slots, and marks each memory active or stale. It has three stages. *Write-side adjudication* extracts state-update candidates from each new session; an LLM labels every related old memory KEEP, STALE, REPLACE or UNKNOWN, archiving stale entries and marking unsafe slots without a replacement as unknown-current. *Propagation-aware search* re-examines the union of directly touched slots, regions an LLM predicts may be affected, and a bounded embedding-similarity fallback. *Constrained readout* identifies the query's presupposed states, labels the premise supported, outdated or unresolved, and grounds the answer only in active memories [1].
 
-### 3.1 Dataset
+### 2.4 Related work
 
-We used the released `T1_T2_400_FULL.json` file from the STALE dataset [2]. The dataset contains 400 instances, evenly split between Type I and Type II. Each instance includes 50 timestamped dialogue sessions, a pair of indices identifying the old and updated evidence sessions, three probe questions, and ground-truth annotations used by the evaluator. The other sessions provide distractor context.
+Long-term memory benchmarks such as LongMemEval [2] test whether stored facts can be retrieved; STALE tests whether expired facts are revised. Memory frameworks such as Mem0 [3], Zep [4], A-Mem [5], LiCoMemory [6] and LightMem [7] select, compress and extract memories; on STALE only LightMem (17.8%) beats the plain GPT-4o-mini model. Concurrently, StateAuditor [8] adds a readout-side audit on STALE and reports a gain of 5.0 points, and TEPA [9] revokes keyed precedents in MemoryAgentBench-style settings and names multi-hop invalidation as out of scope. Neither studies CUPMem, small adjudicators or multi-hop cascades.
 
-For the main run, the project loader selected 25 instances of each conflict type with seed 0. Selection is deterministic: within each type, instance UIDs are ranked by a SHA-256 hash of the seed and UID. This makes the 50-instance subset repeatable and independent of the input file's ordering. It is still a single subset, not a random-effects sample over subset seeds.
+## 3. Reproduction harness
 
-### 3.2 Systems and input conditions
+We implemented a Python package, `stale_repro`, rather than adapting the released scripts, so that every system shares one data path, one evaluation path and one accounting layer.
 
-The primary system is B0, a plain model prompted with the serialized conversation history and one probe at a time. It has no persistent memory store, retrieval module, or write-time state adjudication. The target API model identifier was `gemini-3.1-flash-lite`. The configuration sets generation temperature to 0 and leaves the context limit unset; the full history is therefore passed without the 128,000-token trimming used in the project's GPT-4o-mini B0 configuration.
+**Data loader.** Parses the released JSON into instances with 50 timestamped sessions, gold evidence indices, three probes and judge annotations. Subsets are stratified by type and selected by ranking UIDs on a SHA-256 hash of (seed, UID), so a given (size, seed) always selects the same instances regardless of file order.
 
-The reference results from the STALE paper are based on 200 instances per type. The paper reports 22.4% overall for Gemini-3.1-flash-lite (Type I: 41.0/1.5/42.0 for SR/PR/IPA; Type II: 25.0/1.5/23.5). The present 50-instance result is compared descriptively with these full-dataset point estimates. It is not a paired comparison, and there is no inference that the two estimates are equivalent.
+**LLM gateway.** A single OpenAI-compatible client serves hosted APIs and local servers. Every request is cached on disk under a hash of model, messages and parameters, so reruns and later re-judging cost nothing. Each call is logged with a stage tag, token usage and latency, enabling per-stage cost accounting for later CUPMem experiments. Malformed JSON responses are counted rather than silently retried.
 
-### 3.3 Response generation and evaluation
+**Rate limiting.** Our OpenAI account allows 200,000 tokens per minute (TPM) for GPT-4o-mini. The provider's limiter counts a request as roughly characters/4 plus the maximum output; because the official code sends no `max_tokens`, the 16,384-token default is reserved, so one B0 request counts as about 148K tokens and only one fits per minute. Our first pilot lost two of four instances to HTTP 429 errors. The gateway therefore includes a client-side sliding-window TPM limiter using the same estimate, and a retry loop that waits as long as the error message requests (capped at 120 s, up to 12 retries). Quota-exhaustion errors are raised immediately.
 
-Response prompts follow the released STALE evaluation code and paper appendix [1, 3]. Each instance receives three responses, one for each probe. A joint evaluator call then grades all three responses for that instance. The evaluator receives the old and new states and the hidden explanation and returns a Boolean pass/fail judgment for each dimension using JSON output. Evaluator temperature is 0. The same API model identifier, Gemini-3.1-flash-lite, was used for target generation and evaluation; this choice creates a risk of correlated generation and judging errors.
+**B0 full-context baseline.** Serializes the history with the official formatter and sends one probe per call using the released prompts. For models with a 128K window, it applies the official evidence-preserving truncation: a 125,440-token input budget (128,000 minus 2,048 reserved output and a 512-token margin), removing at most two head sessions, then at most two tail sessions, then randomly chosen sessions strictly between the two evidence sessions, which are always retained. Tokens are counted with tiktoken [10] (`o200k_base`).
 
-The evaluator prompt follows the released rubric: SR passes only when the answer recognizes that the old information may no longer be valid; PR passes when it detects or acknowledges the false premise; IPA passes when its final action or recommendation is safe under the updated state. Answers that simply assume the old state or give a generic response are failures under the rubric.
+**Judge and statistics.** The judge prompt is copied verbatim from the official code: one joint call per instance, JSON output, temperature 0. Judge failures are recorded and re-judged on resume instead of being scored as failures. Statistics are described in Section IV-D.
 
-The original paper does not specify the target model's temperature, and the official target-generation code does not pass a temperature parameter. We set target temperature to zero for repeatability. This is a documented deviation, not an exact reconstruction of an unspecified decoding condition. The run record reports no evaluator errors.
+**Runner.** Experiments are defined in YAML configs. The runner is resumable at instance granularity, supports an answer-only mode for running generation before a judge is available, and writes answers, verdicts, call logs and a summary per run. The package has 25 unit tests, including a fake-clock test of the limiter, all of which run without API keys.
 
-![Figure 1. Evaluation workflow. Each STALE instance contains a 50-session history. B0 receives the full history and one probe at a time; the three responses are graded jointly using the released rubric. The evaluator receives the benchmark ground-truth annotations. No separate memory-writing or retrieval stage is used in this study.](figures/figure_1_workflow.png)
+## 4. Experimental setup
 
-### 3.4 Outcomes and statistical analysis
+### 4.1 Artifacts and budget
 
-Accuracy is calculated separately for each of the six type-by-dimension cells. Overall accuracy is the unweighted mean of those six cell accuracies, matching the paper's definition [1]. For uncertainty intervals, we ran 2,000 percentile-bootstrap replicates with seed 0. Instances were resampled independently within Type I and Type II; the three judgments from one instance were kept together. Intervals are therefore conditional on the observed subset and do not account for subset-selection or model-version uncertainty.
+Table I lists the artifacts used. All experiments after the GPT-4o-mini pilot ran under a zero-cost constraint. The Gemini API free tier offers Gemini-3.1-flash-lite, the paper's judge model, free of charge; free-tier inputs may be used to improve Google's products, which we judged acceptable because STALE is public synthetic data. Total paid spend for this paper was about US$0.23 (the GPT-4o-mini pilot).
 
-We report proportions as percentages. A zero-width percentile-bootstrap interval for a cell with zero observed successes is a limitation of this bootstrap procedure and sample; it is not evidence that the population success probability is exactly zero. We do not use a significance test to compare our subset with the paper's aggregate result.
+**TABLE I. ARTIFACTS USED.**
 
-### 3.5 Dataset context-length analysis
+| Artifact | Version |
+|---|---|
+| Paper | arXiv:2605.06527v1 [1] |
+| Dataset | `T1_T2_400_FULL.json`, rev. 617c51dc, CC BY 4.0 [11] |
+| Official code | commit ea7d391, MIT [12] |
+| GPT-4o-mini | `gpt-4o-mini-2024-07-18` [13] |
+| Gemini | `gemini-3.1-flash-lite`, free tier [14] |
 
-We measured token counts for all 400 serialized histories with the project's `o200k` tokenizer path and the history formatter used by B0. We separately counted the two gold evidence sessions and estimated the number of sessions removed by the project's evidence-preserving GPT-4o-mini trimming procedure for the SR probe. These are descriptive input statistics. The “relevant-only” count refers to the two gold sessions and is an oracle-evidence condition; it is not a retrieval system or a performance result.
+### 4.2 Dataset
 
-## 4. Results
+The released file holds 400 instances, 200 per type, each with exactly 50 sessions and two gold evidence indices. The old evidence always lies in sessions 0–14 and the new evidence in sessions 30–39, separated by 27.2 sessions on average (median 27, range 16–39).
 
-### 4.1 Primary evaluation
+### 4.3 Systems and runs
 
-Table 1 reports all six cell accuracies and the overall score. The main run contains 25 instances of each type (50 total). The full STALE paper values are shown for context; bracketed values are the 95% instance-bootstrap intervals for this study.
+**B0 Gemini-3.1-flash-lite (primary).** Full history, no truncation (the model has a 1M-token window and the paper marks no truncation for it), temperature 0, judged by Gemini-3.1-flash-lite. Subset: 25 instances per type, seed 0. Fig. 1 shows the evaluation flow.
 
-**TABLE I. ACCURACY (%) ON STALE.** Published values use 200 instances per type; this study uses 25 per type. Parentheses show 95% instance-bootstrap intervals.
+**B0 GPT-4o-mini (pilot).** Pinned snapshot, 128K window with evidence-preserving truncation, temperature 0. Subset: 2 instances per type, seed 0; these four instances are contained in the primary subset. A Gemini pilot on the same four instances was run first to measure free-tier throughput.
 
-| Measure | Type | Published | This study (95% CI) |
+![Figure 1. Evaluation workflow for the B0 baseline. Each STALE instance contains a 50-session history; B0 receives the full (or evidence-preserving truncated) history and one probe per call, and the three responses are graded in one joint judge call using the released rubric. The judge receives the benchmark's ground-truth annotations. No retrieval or memory-writing stage is involved.](figures/figure_1_workflow.png)
+
+### 4.4 Outcomes and statistics
+
+Accuracy is computed per type-by-probe cell; overall accuracy is their unweighted mean, as in the paper. Uncertainty is estimated by a percentile bootstrap [15] with 2,000 replicates and seed 0, resampling instances within each type so that the three judgments of one instance stay together. Intervals are conditional on the selected subset and do not reflect subset-selection or model-version uncertainty. A cell with zero observed passes yields a degenerate [0, 0] interval; we therefore also report the probability of observing zero passes under the published rate. We do not test our subset against the paper's aggregate for significance.
+
+### 4.5 Deviations from the official protocol
+
+Table II lists every deviation. Two ambiguities remain open: the paper names CUPMem's labels KEEP/STALE/REPLACE/UNKNOWN, while its appendix describes ADD/REFINE/REPLACE/NO_OP plus a separate invalidation judge; and the paper does not name CUPMem's embedding model, which the code's documentation gives as all-MiniLM-L6-v2.
+
+**TABLE II. DEVIATIONS FROM THE OFFICIAL CODE.**
+
+| # | Where | Official | Ours (reason) |
+|---|---|---|---|
+| D1 | Truncation, phase 3 | Unseeded random choice | RNG seeded by (seed, UID, probe) (exact reruns) |
+| D2 | Judge errors | Silently scored FAIL | Recorded and re-judged (transparency) |
+| D3 | Target temperature | API default | 0 (determinism, caching) |
+| D4 | Token counting | tiktoken, o200k fallback | Same (none) |
+| D5 | Rate limiting | None | Client-side TPM limiter (account limits; prompts unchanged) |
+
+## 5. Results
+
+### 5.1 Harness validation: truncation parity
+
+On all 12 GPT-4o-mini requests (four instances, three probes), our token estimate for the truncated prompt was exactly 2 tokens below the prompt tokens billed by the API, a constant chat-formatting offset (Table III). Between 8 and 11 distractor sessions were removed per request, and both evidence sessions were always retained. This confirms that our truncation reproduces the official budget, tokenizer and chat overhead.
+
+**TABLE III. TRUNCATION PARITY ON THE GPT-4O-MINI PILOT.**
+
+| Instance | Type | Sessions removed (SR / PR / IPA) | Billed prompt tokens (range over probes) |
+|---|---|---|---|
+| 3f1e9264 | II | 10 / 10 / 11 | 122,806–123,583 |
+| 8d21e02f | II | 8 / 8 / 8 | 123,592–124,406 |
+| 4bb62dbf | I | 8 / 9 / 8 | 122,949–124,778 |
+| 45888520 | I | 8 / 8 / 9 | 122,971–124,610 |
+
+### 5.2 GPT-4o-mini pilot
+
+The pilot made 12 calls (1,485,491 input and 4,429 output tokens; about US$0.23). It scored 8.3% overall (interval 0.0–16.7%) against the paper's 8.7% on all 400 instances; at n=4 this agreement is not informative. The answers show the failure patterns the paper describes. SR answers either reaffirmed the old state (Type I; e.g., "Yes ... the user mentioned that they reached a point where they genuinely need a second cup of coffee," after the user described starting the day with water and a walk, "without any stimulants") or claimed the history was silent although both sessions were in context (Type II). Every PR answer accepted the false premise, for example writing anniversary-date ideas for a user who had since started speed-dating. IPA answers gave generic advice that ignored the new state, such as encouraging a spontaneous "wing it" dinner for a user who now needs predictable weeknight meals.
+
+### 5.3 Primary result: B0 Gemini-3.1-flash-lite
+
+Table IV and Fig. 2 report the 50-instance run. Overall accuracy is 26.0% (19.3–33.3%), 3.6 points above the paper's 22.4%. The published value lies inside our interval for the overall score and all four SR and IPA cells; for Type I SR it lies at the lower bound (41.0 vs. 40.0). Both PR cells are 0/25. Under the published PR rate of 1.5%, zero passes in 25 trials occur with probability 0.985^25, approximately 0.69, so this is expected rather than a disagreement. The paper's two most robust patterns reappear: PR is the weakest probe in both types, and Type II SR (32.0%) trails Type I SR (60.0%). Because the design is balanced, the micro-average over 150 judgments (39 passes) equals the six-cell mean.
+
+**TABLE IV. B0 GEMINI-3.1-FLASH-LITE ACCURACY (%).** Published values use 200 instances per type; this study uses 25 per type. Parentheses show 95% instance-bootstrap intervals.
+
+| Probe | Type | Published | This study (95% CI) |
 |---|---|---:|---:|
 | SR | I | 41.0 | 60.0 (40.0–80.0) |
 | PR | I | 1.5 | 0.0 (0.0–0.0) |
@@ -105,83 +148,103 @@ Table 1 reports all six cell accuracies and the overall score. The main run cont
 | IPA | II | 23.5 | 28.0 (12.0–48.0) |
 | Overall | Both | 22.4 | 26.0 (19.3–33.3) |
 
-![Figure 2. Cell-level accuracy comparison. Published STALE Gemini-3.1-flash-lite point estimates are compared with current-study B0 estimates and 95% instance-bootstrap intervals. Published values are full-benchmark results (200 instances per type); current-study estimates use 25 per type. Zero-width intervals arise from zero observed successes and should not be interpreted as zero population uncertainty.](figures/figure_2_accuracy.png)
+![Figure 2. Cell-level accuracy of B0 Gemini-3.1-flash-lite. Diamonds: published full-benchmark values; circles and bars: this study with 95% instance-bootstrap intervals. Zero-width bars arise from zero observed passes.](figures/figure_2_accuracy.png)
 
-Figure 2 visualizes the cell-level comparison. The observed overall estimate is 26.0%, 3.6 percentage points above the paper's point estimate of 22.4%. The paper's result lies within our interval for overall accuracy and for all four SR and IPA cells. In Type I SR, the published value (41.0%) is close to the lower bound of our interval (40.0%).
+The four-instance Gemini pilot, which is contained in this subset and not pooled separately, scored 33.3% (16.7–50.0%). The judge made no errors on any run.
 
-There were no PR passes in either type (0/25 for each). Although a 1.5% underlying rate would yield zero successes in 25 trials with probability \(0.985^{25} \approx 0.69\), so the zero observations are unsurprising at this sample size. The zero-width bootstrap intervals in Table 1 reflect the observed all-zero cells and the percentile bootstrap's inability to generate a nonzero resampled mean from them.
+### 5.4 Context length and CUPMem ingestion modes
 
-The 39 passes out of 150 probe judgments yield a micro-average of 26.0%, which happens to equal the six-cell macro-average because the design is balanced (25 instances per type and three probes per instance). For unequal type sample sizes, these two averages need not agree; the prespecified paper-comparable metric remains the unweighted six-cell mean.
+Across all 400 instances, the serialized history averages 151,784 tokens (median 151,829; range 138,203–164,919), so every instance exceeds a 128K window (Fig. 3). Evidence-preserving truncation for GPT-4o-mini removes 9.0 sessions on average (range 5–13) for the SR probe.
 
-### 4.2 Exploratory smoke runs
+The official CUPMem runner defaults to `--session-mode relevant_only`, which ingests only the two gold evidence sessions. The paper states only that frameworks ingest history "according to its native protocol" [1]. The two gold sessions average 3,133 tokens (range 1,553–7,743), or 2.1% of the history (range 1.0–5.0%). The paper reports a CUPMem cost of about US$0.37 per instance with GPT-4o-mini. At US$0.15 per million input tokens, this corresponds to at most about 2.47M input tokens: 16.3 times the full history, plausible for several LLM calls per session, but 787 times what `relevant_only` ingests. This supports full-history ingestion as the setting behind the reported cost. The argument is indirect, since it ignores output tokens and query-time calls, which do not depend on the ingestion mode. If the 68.0% result were produced in `relevant_only` mode, it would reflect oracle evidence selection that no baseline receives.
 
-Two four-instance runs are retained as pipeline checks. Each includes two instances per conflict type. The Gemini pilot's four UIDs are contained in the 50-instance subset; the GPT-4o-mini pilot uses the same four UIDs. These runs are not independent observations and are not pooled with the primary result.
+![Figure 3. Context length across all 400 STALE instances. Top: serialized history length with the 128K limit. Bottom: full histories versus the two gold evidence sessions (log scale). The evidence-only condition is descriptive, not a model evaluation.](figures/figure_3_context.png)
 
-The Gemini pilot scored 33.3% overall (95% interval 16.7–50.0%). The GPT-4o-mini pilot, configured with a 128,000-token limit and evidence-preserving truncation, scored 8.3% (0.0–16.7%). The paper reports 8.7% for GPT-4o-mini on all 400 instances. The near match in point estimates is not informative at n=4; these pilot scores should not be interpreted as a replication or model ranking.
+### 5.5 Cost and throughput
 
-### 4.3 History length and evidence concentration
+The primary run made 150 generation calls (12 served from cache) with 23,998,928 prompt and 72,470 completion tokens, plus 50 judge calls (4 cached) with 114,518 prompt and 9,947 completion tokens. It took about 84 minutes of wall time and cost nothing. Free-tier throttling appeared only as longer waits, which the gateway absorbed without failures. By contrast, the 200K-TPM OpenAI limit restricts B0 GPT-4o-mini to about one call per minute, or roughly 20 hours for the full 400 instances.
 
-Figure 3 shows the distribution of serialized history lengths and the difference between complete histories and the two gold evidence sessions. Across all 400 instances, full-history length averages 151,784 tokens (median 151,828.5; range 138,203–164,919). Every instance exceeds the 128,000-token context limit configured for the GPT-4o-mini B0 baseline. The two evidence sessions average 3,132.5 tokens (median 2,933.5; range 1,553–7,743), equal to 2.1% of mean full-history length.
+### 5.6 Evaluator audit signal
 
-The old and updated evidence sessions are separated by a mean of 27.2 sessions (median 27; range 16–39). The offline SR truncation analysis removes a mean of 9.0 sessions (range 5–13) while retaining both evidence sessions. These measurements illustrate the long-context and distractor burden, but do not establish how trimming changes answer quality.
+A keyword screen of the primary run found that 8 of the 23 SR answers judged as passes open with "no evidence" or "no mention" wording. Several then cite the updated session correctly, but at least one ("there is no mention of a user named Taylor") appears lenient under the rubric, which fails answers that claim ignorance. Similarly, in the GPT-4o-mini pilot the judge passed an SR answer stating that the user "does not mention being in a committed relationship," reading the leading "No" as recognition of the change. This screen is not a blinded annotation study and does not establish an error count, but it indicates that a human audit is needed before full-benchmark claims.
 
-![Figure 3. Context-length analysis across all 400 STALE instances. Left: distribution of serialized full-history token counts and the 128,000-token GPT-4o-mini context limit. Right: full histories versus the two gold evidence sessions on a logarithmic token axis. The evidence-only condition is descriptive and is not a model evaluation.](figures/figure_3_context.png)
+## 6. Discussion
 
-### 4.4 Recorded API usage
+**The baseline reproduces, within wide intervals.** Our harness reproduces the official input pipeline to within a constant 2-token offset, and our Gemini estimate is compatible with the published row. This is a pipeline-level confirmation, not a full reproduction: 25 rather than 200 instances per type and a single subset seed leave intervals of roughly 20 points either side per cell.
 
-The main run made 150 response-generation calls, of which 12 were served from cache, and recorded 23,998,928 prompt tokens and 72,470 completion tokens. The evaluator recorded 50 calls, of which four were served from cache, with 114,518 prompt tokens and 9,947 completion tokens. The run recorded no JSON parsing failures in generation and no evaluator errors. Token figures are API-reported usage; no comparative price or cost-effectiveness claim is made here.
+**Premise resistance remains the hardest probe.** No model we ran passed a single PR probe. The pilot answers show the mechanism: models comply with a request built on an outdated premise even when both evidence sessions are in context. This is the probe on which CUPMem reports its largest gains, which makes it the most informative target for the next stage.
 
-## 5. Discussion
+**The ingestion mode must be stated.** A comparison between CUPMem and B0 is only matched if both see the same history. The released default gives CUPMem 2.1% of the history, chosen by gold labels. We will report full-history ingestion as the primary CUPMem condition and `relevant_only` as an explicitly labelled oracle ablation, and we will ask the authors which mode produced the published result.
 
-### 5.1 Interpretation of the baseline
+**Reproduction is feasible at zero cost.** Using the paper's own judge model on a free tier, a 50-instance long-context run of 24M prompt tokens completed in under 90 minutes. This lowers the cost barrier for independent verification of long-context memory benchmarks.
 
-The main result is compatible with the broad pattern in STALE: even when supplied with a long dialogue history, a plain model often does not reliably recognize and act on implicitly changed states. The especially low observed PR rates suggest that stale assumptions embedded in questions remain challenging in this sample. SR and IPA scores are higher, but uncertainty is substantial, and the data do not establish a robust difference between conflict types.
+## 7. Limitations
 
-The 26.0% subset estimate is numerically close to the paper's 22.4% full-benchmark value. This is an encouraging pipeline-level check, not a full reproduction. The subset contains 25 rather than 200 instances per type; one deterministic subset seed was used; target temperature was fixed to zero despite being unspecified in the original protocol; and serving-model versioning may differ. The confidence interval reflects within-subset instance variability only.
+1. **Subset size.** The primary run covers 50 of 400 instances with one subset seed.
+2. **Decoding.** Target temperature was 0; the original setting is unspecified and the released code uses the API default (D3).
+3. **Shared target and judge.** Gemini-3.1-flash-lite both answers and judges in the primary run, as in the paper's own row, so errors may be correlated. No independent human audit has been completed.
+4. **Model serving.** API model identifiers are recorded, but a hosted model's backend may change; the GPT-4o-mini snapshot is pinned, the Gemini identifier is not a dated snapshot.
+5. **No CUPMem result.** No CUPMem run, small adjudicator, ablation or cascade experiment is reported; the paper's headline claim is untested here.
+6. **Bootstrap intervals** are conditional on the subset and degenerate for all-zero cells.
+7. **Tokenization.** Context statistics use the o200k tokenizer and the official serialization; other providers tokenize differently.
+8. **Cost inference.** The ingestion-mode argument relies on the paper's reported cost and ignores output and query-time tokens.
 
-### 5.2 Evaluator validity and audit signal
+## 8. Ongoing work
 
-An exploratory review of the primary run flagged wording in 8 of 23 SR responses scored as passes that began with phrases such as “no evidence” or “no mention.” Some of these responses later referred to the updated session; at least one appeared potentially lenient under the stated rubric. This review was not a blinded human annotation study, and it does not establish that any specific number of labels is incorrect.
+Table V lists the remaining experiments. Under the zero-cost budget, small open models will run locally on a single 12 GB consumer GPU. Full-context B0 with such models is infeasible at about 150K tokens of input, but CUPMem processes one session at a time with short prompts, so RQ2–RQ4 remain feasible. RQ3 uses per-stage traces to locate the first failing stage of each failed probe: extraction, candidate search, adjudication or readout.
 
-The evaluator and target share the same model identifier, so errors may be correlated. A stronger evaluation should obtain independent human labels on a stratified sample, include ambiguous “claims ignorance” cases, report agreement and adjudication procedures, and—if feasible—compare the automatic judge with a distinct evaluator model. Until then, the published automatic-judge metrics should be interpreted as rubric-based model judgments rather than independently verified ground truth.
+**TABLE V. REMAINING EXPERIMENTS.**
 
-### 5.3 Implications for reproducing memory systems
+| RQ | Experiment | Status |
+|---|---|---|
+| RQ1 | B0 Gemini, full 400 | Harness ready; about 11 h free |
+| RQ1 | Official CUPMem, both modes | Planned |
+| RQ1 | Independent CUPMem | Planned |
+| RQ2 | 3–9B adjudicators | Local runtime to be set up |
+| RQ3 | Stage-wise attribution | Tracing built into gateway |
+| RQ4 | Ablations with cost | Planned |
+| RQ5 | Two-hop cascade set | Planned |
 
-The current experiment evaluates only the long-context baseline. It does not test the hypothesis that write-side state adjudication improves conflict handling, nor does it show whether a small adjudicator can implement that policy. CUPMem's 68.0% score remains the published result [1]. The official implementation's default `relevant_only` mode ingests only the two gold evidence sessions, while the benchmark also provides 48 distractor sessions; a direct comparison must explicitly identify the session mode and must not compare oracle evidence access to full-history access as if conditions were matched.
+## 9. Conclusion
 
-For an informative CUPMem reproduction, full-history ingestion should be reported as the primary condition when it matches the paper's evaluated setting, with relevant-only ingestion labeled as an oracle-evidence ablation. The paper's reported per-instance cost can provide a consistency check, but cost alone is indirect evidence of ingestion mode because generation output and query-time calls also contribute.
-
-### 5.4 Context burden
-
-The full-context analysis shows why a seemingly simple baseline can be expensive and sensitive to input handling: all 400 histories exceed the configured GPT-4o-mini input limit, and evidence-preserving truncation removes multiple sessions. Conversely, the two gold sessions account for a small share of the context. This gap motivates comparing memory selection and state adjudication, but the present token counts do not show that evidence-only access is sufficient, nor that the discarded sessions are irrelevant in every case.
-
-## 6. Limitations
-
-This study is intentionally preliminary and has several important limitations.
-
-1. **Limited subset.** Only 50 of 400 scenarios were evaluated in the primary run. A single deterministic seed does not measure sensitivity to subset choice.
-2. **Decoding deviation.** Target temperature was set to zero, whereas the original paper's target setting is unspecified and the released target code omits that parameter.
-3. **Evaluator dependence.** Target responses and judgments use the same model identifier. No independent human audit has yet been completed.
-4. **Model serving ambiguity.** The API model identifier is recorded, but the run does not independently establish an immutable backend snapshot.
-5. **No CUPMem or memory baseline.** No CUPMem run, small adjudicator, retrieval baseline, or Mem0 comparison is included. The study therefore cannot answer the project's headline question about write-side adjudication.
-6. **Bootstrap limitations.** The intervals quantify resampling variability conditional on the observed subset. All-zero cells produce degenerate percentile-bootstrap intervals.
-7. **Tokenization and context measurements.** Token counts use the project's tokenizer and serialization. They characterize the input representation and are not guaranteed to equal another provider's billing or internal tokenization.
-8. **No causal claim.** There is no randomized comparison of memory architectures or context conditions, so the results support descriptive conclusions only.
-
-## 7. Conclusion
-
-On a deterministic, type-balanced subset of 50 STALE instances, plain long-context Gemini-3.1-flash-lite achieved 26.0% overall accuracy, with a 95% instance-bootstrap interval of 19.3–33.3%. This estimate is compatible with the paper's 22.4% full-benchmark Gemini result, but the limited sample, target-decoding deviation, and shared target/judge model preclude a strong reproduction claim. PR had no observed passes in either type, although the sample is too small to infer a zero underlying rate.
-
-The full-dataset context analysis found a mean serialized history length of 151,784 tokens, and all 400 instances exceeded the GPT-4o-mini context limit used by the project's B0 configuration. These results establish a useful baseline record and characterize a substantial input burden. They do not evaluate CUPMem. Full-benchmark B0 runs, independent evaluation audits, and clearly matched CUPMem conditions are needed before making claims about write-side adjudication or small adjudicator models.
+We built and validated a reproduction harness for STALE and used it, at zero cost, to reproduce the paper's Gemini-3.1-flash-lite long-context baseline on a 50-instance subset: 26.0% overall against a published 22.4%, with premise resistance at 0% in both conflict types. We also showed that CUPMem's default ingestion mode exposes it to 2.1% of each history, an unstated setting that must be fixed before its 68.0% can be compared with any baseline. Full-benchmark runs, a human audit of the judge and matched CUPMem conditions are the next steps.
 
 ## Data and code availability
 
-The benchmark is available from STALEproj/STALE under CC BY 4.0 [2]. The official STALE evaluation code is released under MIT [3]. The primary run configuration, answers, verdicts, call logs, and summary are recorded under `runs/b0_gemini31fl_dev/`; aggregate input-length data are recorded under `runs/analysis/ingestion.json` and `runs/analysis/ingestion_rows.jsonl`. The figures in this manuscript can be regenerated using `papers/figures/generate_figures.py`. Public release of the full run artifacts and confirmation of repository access should be completed before submission. No API credentials are included in the manuscript.
+The benchmark [11] and official code [12] are public. Our harness, configurations, figure scripts and reproducibility log are available at https://github.com/Hrithik373/StaleMEM_Test. Run outputs (answers, verdicts, call logs and summaries) are stored per run under `runs/` and will be released with the final version. No API credentials are included.
+
+## Acknowledgment
+
+[To be completed before submission: disclosure of any AI tool use, as required by IEEE policy.]
 
 ## References
 
-[1] H. Chao, Y. Bai, R. Sheng, T. Li, and Y. Sun. “STALE: Can LLM Agents Know When Their Memories Are No Longer Valid?” arXiv:2605.06527v1, 2026. https://arxiv.org/abs/2605.06527
+[1] H. Chao, Y. Bai, R. Sheng, T. Li, and Y. Sun, "STALE: Can LLM agents know when their memories are no longer valid?" arXiv:2605.06527v1, 2026. https://arxiv.org/abs/2605.06527
 
-[2] STALEproj. “STALE: State Tracking and Latent Evaluation.” Hugging Face dataset, `T1_T2_400_FULL.json`, dataset revision identified in the project reproducibility log by SHA `617c51dc`. CC BY 4.0. https://huggingface.co/datasets/STALEproj/STALE
+[2] D. Wu, H. Wang, W. Yu, Y. Zhang, K.-W. Chang, and D. Yu, "LongMemEval: Benchmarking chat assistants on long-term interactive memory," 2025.
 
-[3] icedreamc. “STALE and CUP-Mem.” Official code repository, commit `ea7d391`, 2026. MIT License. https://github.com/icedreamc/STALE
+[3] P. Chhikara, D. Khant, S. Aryan, T. Singh, and D. Yadav, "Mem0: Building production-ready AI agents with scalable long-term memory," 2025.
+
+[4] P. Rasmussen, P. Paliychuk, T. Beauvais, J. Ryan, and D. Chalef, "Zep: A temporal knowledge graph architecture for agent memory," 2025.
+
+[5] W. Xu, Z. Liang, K. Mei, H. Gao, J. Tan, and Y. Zhang, "A-Mem: Agentic memory for LLM agents," 2025.
+
+[6] Z. Huang, Z. Tian, Q. Guo, F. Zhang, Y. Zhou, D. Jiang, Z. Xie, and X. Zhou, "LiCoMemory: Lightweight and cognitive agentic memory for efficient long-term reasoning," 2026.
+
+[7] J. Fang, X. Deng, H. Xu, Z. Jiang, Y. Tang, Z. Xu, S. Deng, Y. Yao, M. Wang, S. Qiao, H. Chen, and N. Zhang, "LightMem: Lightweight and efficient memory-augmented generation," 2026.
+
+[8] Sun and He, "StateAuditor," arXiv:2608.01619, 2026. [Full reference to be completed.]
+
+[9] Zhou et al., "TEPA," arXiv:2608.07429, 2026. [Full reference to be completed.]
+
+[10] OpenAI, "tiktoken: a fast BPE tokeniser for use with OpenAI's models," GitHub repository. https://github.com/openai/tiktoken
+
+[11] STALEproj, "STALE dataset, file T1_T2_400_FULL.json (revision 617c51dc)," Hugging Face Datasets, CC BY 4.0, 2026. https://huggingface.co/datasets/STALEproj/STALE
+
+[12] icedreamc, "STALE and CUPMem: official code, commit ea7d391," GitHub repository, MIT License, 2026. https://github.com/icedreamc/STALE
+
+[13] OpenAI, "GPT-4o mini," model snapshot gpt-4o-mini-2024-07-18, 2024.
+
+[14] Google DeepMind, "Gemini 3.1 Flash-Lite," Feb. 2026.
+
+[15] B. Efron and R. J. Tibshirani, An Introduction to the Bootstrap. New York: Chapman & Hall, 1993.

@@ -11,3 +11,4 @@ external/
 papers/*.pdf
 runs/
 cache/
+!papers/manuscript.pdf

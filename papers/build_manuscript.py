@@ -124,6 +124,9 @@ styles.add(ParagraphStyle(
     spaceAfter=2.5 * mm,
 ))
 styles.add(ParagraphStyle(
+    "TableCaptionPaper", parent=styles["CaptionPaper"], keepWithNext=True,
+))
+styles.add(ParagraphStyle(
     "QuotePaper", parent=styles["BodyPaper"], leftIndent=4 * mm,
     rightIndent=4 * mm, fontName=ITALIC,
 ))
@@ -177,9 +180,25 @@ def make_table(lines: list[str], width: float) -> Table:
         re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in row
     )]
     ncols = max(map(len, rows))
-    col_widths = [width / ncols] * ncols
-    if ncols == 4:
-        col_widths = [width * 0.18, width * 0.13, width * 0.2, width * 0.49]
+    # Every column is at least as wide as its longest word (measured, plus padding), so no word is
+    # broken; the remaining width goes to the columns whose full text is longest.
+    def text_width(text: str, header: bool) -> float:
+        plain = re.sub(r"[*`]", "", text)
+        return pdfmetrics.stringWidth(plain, BOLD if header else FONT, 7.2)
+
+    pad = 7.0
+    min_w, want_w = [], []
+    for i in range(ncols):
+        cells = [(r[i], r_index == 0) for r_index, r in enumerate(rows) if i < len(r)]
+        min_w.append(max((text_width(w, h) for c, h in cells for w in c.split()), default=6) + pad)
+        want_w.append(max((text_width(c, h) for c, h in cells), default=6) + pad)
+    spare = width - sum(min_w)
+    if spare <= 0:
+        col_widths = [width * m / sum(min_w) for m in min_w]
+    else:
+        grow = [max(w - m, 0) for w, m in zip(want_w, min_w)]
+        total = sum(grow) or 1
+        col_widths = [m + spare * g / total for m, g in zip(min_w, grow)]
     cells = []
     for row_index, row in enumerate(rows):
         row += [""] * (ncols - len(row))
@@ -323,7 +342,7 @@ def parse_body(lines: list[str]) -> list:
             continue
         if line.startswith("**TABLE"):
             flush_body()
-            story.append(Paragraph(inline_markup(line), styles["CaptionPaper"]))
+            story.append(Paragraph(inline_markup(line), styles["TableCaptionPaper"]))
             i += 1
             continue
         body_lines.append(line)
@@ -348,7 +367,7 @@ def create_document() -> BaseDocTemplate:
     bottom_margin = 1.0 * 72
     gutter = COLUMN_GUTTER
     content_width = page_width - left_margin - right_margin
-    title_height = 1.55 * 72
+    title_height = 2.0 * 72
     title_bottom = page_height - top_margin - title_height
     column_top = title_bottom - 8
     column_height = column_top - bottom_margin
