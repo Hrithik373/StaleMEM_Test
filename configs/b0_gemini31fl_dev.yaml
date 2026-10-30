@@ -1,0 +1,24 @@
+# E1 / B0 on the Gemini API free tier: plain long-context Gemini-3.1-flash-lite on a 50-instance subset.
+# Paper reference (Table 2, full 400, no truncation): T1 41.0/1.5/42.0, T2 25.0/1.5/23.5, Overall 22.4
+# Free-only budget (2026-10-23): this is the paper row we can reproduce at no cost.
+name: b0_gemini31fl_dev
+data: data/stale/T1_T2_400_FULL.json
+subset: {n_per_type: 25, seed: 0}
+session_mode: full
+workers: 1
+
+system:
+  kind: full_context
+  llm:
+    model: gemini-3.1-flash-lite
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key_env: GEMINI_API_KEY
+    params: {temperature: 0}   # same deviation D3 as the GPT-4o-mini config
+  args:
+    context_limit: null        # 1M-token window; the paper applies no truncation to this model
+
+judge:
+  llm:
+    model: gemini-3.1-flash-lite
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key_env: GEMINI_API_KEY

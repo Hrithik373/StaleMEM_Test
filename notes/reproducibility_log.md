@@ -82,6 +82,43 @@ Data: https://huggingface.co/datasets/STALEproj/STALE, file `T1_T2_400_FULL.json
 ### Judge
 - No Gemini key yet. The runner now supports `--no-judge` (answers only). Judging can be run later from cached answers at no additional generation cost.
 
+## 2026-10-23: Free-only constraint; first judged run
+
+### Budget constraint
+- From now on, only free resources are used. OpenAI runs (the paper's GPT-4o-mini rows) are paused.
+- The judge stays paper-faithful: `gemini-3.1-flash-lite` is free of charge on the Gemini API free tier (checked on ai.google.dev pricing, 2026-10-23). Free-tier inputs may be used by Google to improve products. That is acceptable because STALE is public synthetic data.
+- The model id `gemini-3.1-flash-lite` resolves via the OpenAI-compatible endpoint. This closes the Week 1 TODO on the judge model id.
+
+### Smoke test judged (4 instances, B0 GPT-4o-mini)
+- 0 judge errors, about 2 s per call.
+- Cells: T1 SR 0/2, PR 0/2, IPA 0/2; T2 SR 1/2, PR 0/2, IPA 0/2. Overall 8.3% (paper: 8.7%). Four instances is far too few to compare.
+- Note: the judge **passed** the T2 SR answer "No, the user does not mention being in a committed relationship ... in the conversation history" (uid 3f1e9264). On 3 Oct we expected this "claims ignorance" answer to fail. The judge read the "No" as recognising the change. Track how often such borderline passes occur once a larger set is judged.
+
+### Ingestion-mode analysis (all 400, no model calls)
+- `scripts/analyze_ingestion.py` writes `runs/analysis/ingestion.json`.
+- Full history: mean 151,784 o200k tokens (138,203–164,919). `relevant_only`: mean 3,133 (1,553–7,743), i.e. **2.1%** of the history.
+- The paper's $0.37/instance is about 2.47M GPT-4o-mini input tokens if all of it is input. That is 16.3× the full history but 787× the `relevant_only` input, which supports `full` as the mode behind the paper's cost. It is indirect evidence: output tokens and query-time calls are ignored.
+- B0 GPT-4o-mini truncation drops 9.0 sessions on average (5–13) for the SR probe.
+
+### B0 Gemini-3.1-flash-lite dev run (50 instances, 25/type, seed 0), free tier
+- Config: `configs/b0_gemini31fl_dev.yaml`. No truncation (1M window), temperature 0 (D3). The judge is the same model, as in the paper.
+- 150 answer calls (12 cached from the 4-instance pilot) and 24.0M prompt tokens. About 84 min wall time.
+- No quota errors. Free-tier throttling showed up only as longer waits, which the gateway absorbed.
+- Results (bootstrap 95% CI) vs paper:
+
+| Cell | Ours (n=25/type) | Paper (n=200/type) |
+|---|---|---|
+| T1 SR | 60.0 [40, 80] | 41.0 |
+| T1 PR | 0.0 [0, 0] | 1.5 |
+| T1 IPA | 36.0 [20, 56] | 42.0 |
+| T2 SR | 32.0 [16, 52] | 25.0 |
+| T2 PR | 0.0 [0, 0] | 1.5 |
+| T2 IPA | 28.0 [12, 48] | 23.5 |
+| Overall | 26.0 [19.3, 33.3] | 22.4 |
+
+- The paper value lies inside our interval for overall and all four SR/IPA cells (T1 SR only just: 41.0 vs lower bound 40.0). Both PR cells are 0/25, so the bootstrap interval collapses to [0, 0] and excludes the paper's 1.5%. That is not evidence of a difference: at a true rate of 1.5%, P(0 of 25) = 0.985^25 = 0.69.
+- Judge audit flag: 8 of 23 SR passes open with "no evidence" or "no mention" wording. Several then cite the new session, but ebdf7090 ("no mention of a user named Taylor") looks lenient. These need a manual audit before the full run.
+
 ## Related work check (2026-09-27)
 - **StateAuditor** (Sun & He, arXiv:2608.01619) evaluates on full STALE with a readout-side audit and gets +5.0 points. It doesn't mention CUPMem, small adjudicators, or multi-hop cascades. Use it as related work and possibly as a readout-side baseline.
 - **TEPA** (Zhou et al., arXiv:2608.07429) revokes keyed precedents and is evaluated on MemoryAgentBench-style settings, not STALE per its abstract. Its authors explicitly flag multi-hop as beyond scope, which supports our RQ5.
